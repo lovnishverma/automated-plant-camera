@@ -12,10 +12,10 @@ import sys
 # -------------------- SETUP --------------------
 
 # Setup logger with file output
-log_filename = f"plant_monitor_{datetime.now().strftime('%Y%m%d')}.log"
+log_filename = f"camera_timelapse_{datetime.now().strftime('%Y%m%d')}.log"
 logging.basicConfig(
-    level=logging.INFO, 
-    format='[%(asctime)s] %(levelname)s: %(message)s', 
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%H:%M:%S',
     handlers=[
         logging.FileHandler(log_filename),
@@ -35,7 +35,7 @@ CONFIG = {
 
 # Global variables
 drive = None
-plants_folder_id = None
+main_folder_id = None
 running = True
 
 # -------------------- SIGNAL HANDLER --------------------
@@ -53,31 +53,31 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 def authenticate_drive():
     """Authenticate with Google Drive with error handling."""
-    global drive, plants_folder_id
-    
+    global drive, main_folder_id
+
     try:
         logging.info(" Authenticating with Google Drive...")
         gauth = GoogleAuth()
-        
+
         # Load existing credentials
         if os.path.exists("mycreds.txt"):
             gauth.LoadCredentialsFile("mycreds.txt")
-        
+
         if gauth.credentials is None:
             gauth.LocalWebserverAuth()
         elif gauth.access_token_expired:
             gauth.Refresh()
         else:
             gauth.Authorize()
-            
+
         gauth.SaveCredentialsFile("mycreds.txt")
         drive = GoogleDrive(gauth)
-        
-        # Setup plants folder
-        plants_folder_id = get_or_create_drive_folder("plants")
+
+        # Setup Camera Timelapse Monitor folder
+        main_folder_id = get_or_create_drive_folder("Camera Timelapse Monitor")
         logging.info(" Google Drive authentication successful")
         return True
-        
+
     except Exception as e:
         logging.error(f" Google Drive authentication failed: {e}")
         return False
@@ -103,7 +103,7 @@ def get_or_create_drive_folder(name, parent_id=None):
         folder.Upload()
         logging.info(f" Created folder: {name}")
         return folder['id']
-        
+
     except Exception as e:
         logging.error(f" Failed to create/get folder {name}: {e}")
         return None
@@ -116,29 +116,29 @@ def capture_image(filepath):
     try:
         logging.info(f" Attempting to capture image...")
         cam = cv2.VideoCapture(CONFIG['camera_index'])
-        
+
         # Check if camera opened successfully
         if not cam.isOpened():
             logging.error(" Cannot open camera")
             return False
-            
+
         # Set camera properties for better quality
         cam.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
         cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-        
+
         # Allow camera to warm up
         time.sleep(CONFIG['warmup_time'])
-        
+
         # Capture frame
         ret, frame = cam.read()
-        
+
         if not ret or frame is None:
             logging.error(" Failed to capture frame")
             return False
 
         # Save with specified quality
         cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, CONFIG['image_quality']])
-        
+
         # Verify file was created and has reasonable size
         if os.path.exists(filepath) and os.path.getsize(filepath) > 1000:  # At least 1KB
             logging.info(f" Image captured successfully: {os.path.basename(filepath)}")
@@ -146,7 +146,7 @@ def capture_image(filepath):
         else:
             logging.error(" Image file not created or too small")
             return False
-            
+
     except Exception as e:
         logging.error(f" Camera capture error: {e}")
         return False
@@ -160,7 +160,7 @@ def upload_with_retry(local_filepath, filename, day_folder_id, max_retries=None)
     """Upload file to Google Drive with retry logic."""
     if max_retries is None:
         max_retries = CONFIG['max_retries']
-        
+
     for attempt in range(max_retries):
         try:
             file_drive = drive.CreateFile({
@@ -169,17 +169,17 @@ def upload_with_retry(local_filepath, filename, day_folder_id, max_retries=None)
             })
             file_drive.SetContentFile(local_filepath)
             file_drive.Upload()
-            
+
             logging.info(f" Upload successful: {filename}")
             return True
-            
+
         except Exception as e:
             logging.warning(f" Upload attempt {attempt + 1} failed: {e}")
             if attempt < max_retries - 1:
                 time.sleep(5)  # Wait before retry
             else:
                 logging.error(f" Upload failed after {max_retries} attempts")
-                
+
     return False
 
 # -------------------- MAIN FUNCTION --------------------
@@ -188,7 +188,7 @@ def capture_and_upload():
     """Main function to capture image and upload to Drive."""
     if not running:
         return
-        
+
     # Prepare folder name and paths
     now = datetime.now()
     date_folder = now.strftime("%Y-%m-%d")
@@ -204,10 +204,10 @@ def capture_and_upload():
         return
 
     # Upload to Google Drive if authentication is successful
-    if drive and plants_folder_id:
+    if drive and main_folder_id:
         # Create/get date folder in Drive
-        day_folder_id = get_or_create_drive_folder(date_folder, parent_id=plants_folder_id)
-        
+        day_folder_id = get_or_create_drive_folder(date_folder, parent_id=main_folder_id)
+
         if day_folder_id:
             success = upload_with_retry(local_filepath, filename, day_folder_id)
             if success:
@@ -229,18 +229,18 @@ def cleanup_old_files(days_to_keep=7):
 
 def main():
     global running
-    
-    logging.info(" Plant Monitor Script Starting...")
-    
+
+    logging.info(" Camera Timelapse Monitor Script Starting...")
+
     # Authenticate with Google Drive
     if not authenticate_drive():
         logging.error(" Cannot continue without Google Drive access")
         return
-    
+
     # Setup scheduler
     schedule.every(CONFIG['capture_interval_seconds']).seconds.do(capture_and_upload)
     logging.info(f" Capturing image every {CONFIG['capture_interval_seconds']} seconds. Press Ctrl+C to stop.")
-    
+
     # Take first image immediately
     capture_and_upload()
 
@@ -252,7 +252,7 @@ def main():
     except KeyboardInterrupt:
         logging.info(" Script stopped by user.")
     finally:
-        logging.info(" Plant Monitor Script Ended.")
+        logging.info(" Camera Timelapse Monitor Script Ended.")
 
 if __name__ == "__main__":
     main()
